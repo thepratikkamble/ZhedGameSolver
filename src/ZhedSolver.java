@@ -1,15 +1,21 @@
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ZhedSolver {
     private final int goalI, goalJ;
     private static final int[][] DIRS = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}}; // up, down, left, right
     private static final String[] DIR_NAMES = {"up", "down", "left", "right"};
     private Set<Long> visited;
+    private volatile List<String> solution; // Shared solution across threads
+    private AtomicBoolean solved; // Flag to stop threads when solution is found
 
     public ZhedSolver(int goalI, int goalJ) {
         this.goalI = goalI;
         this.goalJ = goalJ;
-        this.visited = new HashSet<>();
+        this.visited = Collections.synchronizedSet(new HashSet<>()); // Thread-safe
+        this.solution = null;
+        this.solved = new AtomicBoolean(false);
     }
 
     public List<String> solve(int[][] initialBoard) {
@@ -21,66 +27,109 @@ public class ZhedSolver {
                 }
             }
         }
-
         towers.sort((t1, t2) -> {
             int d1 = Math.abs(t1.i - goalI) + Math.abs(t1.j - goalJ);
             int d2 = Math.abs(t2.i - goalI) + Math.abs(t2.j - goalJ);
             return Integer.compare(d2, d1);
         });
-        List<String> sequence = new ArrayList<>();
+        List<String> sequence = Collections.synchronizedList(new ArrayList<>());
         System.out.println("Initial Board:");
         printBoard(initialBoard);
-        visited.clear(); // Reset visited set for each solve
-        return dfs(initialBoard, towers, sequence) ? sequence : null;
+        visited.clear();
+
+        // Multithreading setup
+        int threadCount = Runtime.getRuntime().availableProcessors(); // Use available cores
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        List<Future<?>> futures = new ArrayList<>();
+
+        // Submit a task for each initial tower-direction pair
+        for (int t = 0; t < towers.size(); t++) {
+            Tower tower = towers.get(t);
+            for (int dir = 0; dir < 4; dir++) {
+                if (!isWithinBounds(tower.i, tower.j, dir, tower.k)) continue;
+                int[][] newBoard = cloneBoard(initialBoard);
+                activateTower(newBoard, tower, dir);
+                List<Tower> newRemaining = new ArrayList<>(towers);
+                newRemaining.remove(t);
+                List<String> threadSequence = new ArrayList<>();
+                threadSequence.add("Activate (" + tower.i + "," + tower.j + ") " + DIR_NAMES[dir]);
+                futures.add(executor.submit(() -> {
+                    if (!solved.get()) {
+                        dfs(newBoard, newRemaining, threadSequence);
+                    }
+                }));
+            }
+        }
+
+        // Wait for any thread to finish or all to complete
+        for (Future<?> future : futures) {
+            try {
+                future.get();
+            } catch (InterruptedException | ExecutionException e) {
+                e.printStackTrace();
+            }
+        }
+        executor.shutdown();
+        try {
+            executor.awaitTermination(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        return solution != null ? new ArrayList<>(solution) : null;
     }
 
-    private boolean dfs(int[][] board, List<Tower> remaining, List<String> sequence) {
+    private void dfs(int[][] board, List<Tower> remaining, List<String> sequence) {
+        if (solved.get()) return; // Stop if solution found
+
         long hash = boardToHash(board);
-        if (visited.contains(hash)) return false;
+        if (visited.contains(hash)) return;
         visited.add(hash);
 
-        if (remaining.isEmpty()) return board[goalI][goalJ] == -1;
+        if (remaining.isEmpty()) {
+            if (board[goalI][goalJ] == -1) {
+                synchronized (this) {
+                    if (!solved.get()) {
+                        solution = new ArrayList<>(sequence); // Store solution
+                        solved.set(true);
+                    }
+                }
+            }
+            return;
+        }
 
-        for (int t = 0; t < remaining.size(); t++) {
+        for (int t = 0; t < remaining.size() && !solved.get(); t++) {
             Tower tower = remaining.get(t);
             if (board[tower.i][tower.j] > 0) {
                 for (int dir = 0; dir < 4; dir++) {
-
                     if (!isWithinBounds(tower.i, tower.j, dir, tower.k)) continue;
-
                     int[][] newBoard = cloneBoard(board);
                     activateTower(newBoard, tower, dir);
                     List<Tower> newRemaining = new ArrayList<>(remaining);
                     newRemaining.remove(t);
                     String move = "Activate (" + tower.i + "," + tower.j + ") " + DIR_NAMES[dir];
-                    sequence.add(move);
-                    System.out.println("\nAfter " + move + ":");
-                    printBoard(newBoard);
-                    if (dfs(newBoard, newRemaining, sequence)) {
-                        return true;
-                    }
-                    sequence.remove(sequence.size() - 1);
+                    List<String> newSequence = new ArrayList<>(sequence);
+                    newSequence.add(move);
+                    dfs(newBoard, newRemaining, newSequence);
                 }
             }
         }
-        return false;
     }
 
     private boolean isWithinBounds(int i, int j, int dir, int k) {
-
-        int minI = 0, maxI = 6, minJ = 1, maxJ = 7; // Example box for your input
+        int minI = 0, maxI = 6, minJ = 1, maxJ = 7;
         int di = DIRS[dir][0], dj = DIRS[dir][1];
         int ni = i + di, nj = j + dj;
-        int steps = k; // Number of tiles the tower can fill
+        int steps = k;
         while (steps > 0 && ni >= 0 && ni < 8 && nj >= 0 && nj < 8) {
             if (ni >= minI && ni <= maxI && nj >= minJ && nj <= maxJ) {
-                return true; // At least one tile falls within bounds
+                return true;
             }
             ni += di;
             nj += dj;
             steps--;
         }
-        return false; // All tiles fall outside bounds
+        return false;
     }
 
     private void activateTower(int[][] board, Tower tower, int dir) {
@@ -123,7 +172,7 @@ public class ZhedSolver {
         long hash = 0;
         for (int i = 0; i < 8; i++) {
             for (int j = 0; j < 8; j++) {
-                hash = (hash << 1) | (board[i][j] == -1 ? 1 : 0); // 1 for filled, 0 otherwise
+                hash = (hash << 1) | (board[i][j] == -1 ? 1 : 0);
             }
         }
         return hash;
