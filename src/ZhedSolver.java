@@ -1,166 +1,253 @@
 import java.util.*;
+import java.util.List;
+import java.util.Arrays;
 
 public class ZhedSolver {
-    private final int goalI, goalJ;
-    private static final int[][] DIRS = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}}; // up, down, left, right
-    private static final String[] DIR_NAMES = {"up", "down", "left", "right"};
-    private Set<Long> visited;
 
-    public ZhedSolver(int goalI, int goalJ) {
-        this.goalI = goalI;
-        this.goalJ = goalJ;
-        this.visited = new HashSet<>();
-    }
-
-    public List<String> solve(int[][] initialBoard) {
-        List<Tower> towers = new ArrayList<>();
-        for (int i = 0; i < 8; i++) {
-            for (int j = 0; j < 8; j++) {
-                if (initialBoard[i][j] > 0) {
-                    towers.add(new Tower(i, j, initialBoard[i][j]));
-                }
+    public enum Direction {
+        UP, DOWN, LEFT, RIGHT;
+        public int dr() {
+            switch (this) {
+                case UP: return -1;
+                case DOWN: return 1;
+                default: return 0;
             }
         }
-
-        towers.sort((t1, t2) -> {
-            int d1 = Math.abs(t1.i - goalI) + Math.abs(t1.j - goalJ);
-            int d2 = Math.abs(t2.i - goalI) + Math.abs(t2.j - goalJ);
-            return Integer.compare(d2, d1);
-        });
-        List<String> sequence = new ArrayList<>();
-        System.out.println("Initial Board:");
-        printBoard(initialBoard);
-        visited.clear(); // Reset visited set for each solve
-        return dfs(initialBoard, towers, sequence) ? sequence : null;
+        public int dc() {
+            switch (this) {
+                case LEFT: return -1;
+                case RIGHT: return 1;
+                default: return 0;
+            }
+        }
     }
 
-    private boolean dfs(int[][] board, List<Tower> remaining, List<String> sequence) {
-        long hash = boardToHash(board);
-        if (visited.contains(hash)) return false;
-        visited.add(hash);
+    public static class Move {
+        public int row, col;
+        public Direction dir;
+        public Move(int row, int col, Direction dir) {
+            this.row = row;
+            this.col = col;
+            this.dir = dir;
+        }
+        @Override
+        public String toString() {
+            return "Activate (" + row + "," + col + ") " + dir.toString().toLowerCase();
+        }
+    }
 
-        if (remaining.isEmpty()) return board[goalI][goalJ] == -1;
+    static class Cell {
+        int row, col;
+        Cell(int row, int col) { this.row = row; this.col = col; }
+    }
 
-        for (int t = 0; t < remaining.size(); t++) {
-            Tower tower = remaining.get(t);
-            if (board[tower.i][tower.j] > 0) {
-                for (int dir = 0; dir < 4; dir++) {
+    public static final int ROWS = 8, COLS = 8;
+    private static Set<String> visitedStates = new HashSet<>();
 
-                    if (!isWithinBounds(tower.i, tower.j, dir, tower.k)) continue;
+    // Static goal coordinates so that simulateMove can check them.
+    public static int goalRow, goalCol;
 
-                    int[][] newBoard = cloneBoard(board);
-                    activateTower(newBoard, tower, dir);
-                    List<Tower> newRemaining = new ArrayList<>(remaining);
-                    newRemaining.remove(t);
-                    String move = "Activate (" + tower.i + "," + tower.j + ") " + DIR_NAMES[dir];
-                    sequence.add(move);
-                    System.out.println("\nAfter " + move + ":");
-                    printBoard(newBoard);
-                    if (dfs(newBoard, newRemaining, sequence)) {
-                        return true;
+    public static List<Move> solve(int[][] board, int gRow, int gCol) {
+        goalRow = gRow;
+        goalCol = gCol;
+        visitedStates.clear();
+        List<Move> moves = new ArrayList<>();
+        if (search(board, goalRow, goalCol, moves)) {
+            return moves;
+        }
+        return null;
+    }
+
+    private static boolean search(int[][] board, int goalRow, int goalCol, List<Move> moves) {
+        if (board[goalRow][goalCol] == -1) return true;
+        List<Move> backwardSolution = solveBackward(board, goalRow, goalCol);
+        if (backwardSolution != null) {
+            moves.addAll(backwardSolution);
+            return true;
+        }
+        String stateKey = boardToString(board);
+        if (visitedStates.contains(stateKey)) return false;
+        visitedStates.add(stateKey);
+        for (int i = 0; i < ROWS; i++) {
+            for (int j = 0; j < COLS; j++) {
+                if (board[i][j] > 0) {
+                    for (Direction d : Direction.values()) {
+                        int[][] newBoard = copyBoard(board);
+                        if (simulateMove(newBoard, i, j, d)) {
+                            moves.add(new Move(i, j, d));
+                            if (search(newBoard, goalRow, goalCol, moves)) {
+                                return true;
+                            }
+                            moves.remove(moves.size() - 1);
+                        }
                     }
-                    sequence.remove(sequence.size() - 1);
                 }
             }
         }
         return false;
     }
 
-    private boolean isWithinBounds(int i, int j, int dir, int k) {
-
-        int minI = 0, maxI = 6, minJ = 1, maxJ = 7; // Example box for your input
-        int di = DIRS[dir][0], dj = DIRS[dir][1];
-        int ni = i + di, nj = j + dj;
-        int steps = k; // Number of tiles the tower can fill
-        while (steps > 0 && ni >= 0 && ni < 8 && nj >= 0 && nj < 8) {
-            if (ni >= minI && ni <= maxI && nj >= minJ && nj <= maxJ) {
-                return true; // At least one tile falls within bounds
+    private static List<Move> solveBackward(int[][] board, int goalRow, int goalCol) {
+        if (board[goalRow][goalCol] == -1) return new ArrayList<>();
+        for (int i = 0; i < ROWS; i++) {
+            for (int j = 0; j < COLS; j++) {
+                if (board[i][j] > 0) {
+                    Direction d = null;
+                    if (i == goalRow) {
+                        d = (j < goalCol) ? Direction.RIGHT : (j > goalCol) ? Direction.LEFT : null;
+                    }
+                    if (j == goalCol) {
+                        d = (i < goalRow) ? Direction.DOWN : (i > goalRow) ? Direction.UP : d;
+                    }
+                    if (d != null) {
+                        List<Cell> path = new ArrayList<>();
+                        int r = i, c = j;
+                        while (true) {
+                            r += d.dr();
+                            c += d.dc();
+                            if (r < 0 || r >= ROWS || c < 0 || c >= COLS) break;
+                            path.add(new Cell(r, c));
+                            if (r == goalRow && c == goalCol) break;
+                        }
+                        int needed = 0;
+                        for (Cell cell : path) {
+                            if (board[cell.row][cell.col] != -1) needed++;
+                        }
+                        if (needed == board[i][j] && contains(path, goalRow, goalCol)) {
+                            int[][] boardCopy = copyBoard(board);
+                            boardCopy[i][j] = -1;
+                            List<Move> subMoves = new ArrayList<>();
+                            boolean allSolved = true;
+                            for (Cell cell : path) {
+                                if (boardCopy[cell.row][cell.col] != -1) {
+                                    List<Move> sol = solveBackward(boardCopy, cell.row, cell.col);
+                                    if (sol == null) {
+                                        allSolved = false;
+                                        break;
+                                    } else {
+                                        for (Move m : sol) {
+                                            simulateMove(boardCopy, m.row, m.col, m.dir);
+                                        }
+                                        subMoves.addAll(sol);
+                                    }
+                                }
+                            }
+                            if (allSolved && boardCopy[goalRow][goalCol] == -1) {
+                                subMoves.add(new Move(i, j, d));
+                                return subMoves;
+                            }
+                        }
+                    }
+                }
             }
-            ni += di;
-            nj += dj;
-            steps--;
         }
-        return false; // All tiles fall outside bounds
+        return null;
     }
 
-    private void activateTower(int[][] board, Tower tower, int dir) {
-        int i = tower.i, j = tower.j, k = tower.k;
-        board[i][j] = -1;
-        int di = DIRS[dir][0], dj = DIRS[dir][1];
-        int fillsLeft = k;
-        int ni = i + di, nj = j + dj;
-        while (fillsLeft > 0 && ni >= 0 && ni < 8 && nj >= 0 && nj < 8) {
-            if (board[ni][nj] == -1) {
-                ni += di;
-                nj += dj;
-                continue;
-            }
-            board[ni][nj] = -1;
-            fillsLeft--;
-            ni += di;
-            nj += dj;
+    private static boolean contains(List<Cell> cells, int goalRow, int goalCol) {
+        for (Cell cell : cells) {
+            if (cell.row == goalRow && cell.col == goalCol) return true;
         }
+        return false;
     }
 
-    private int[][] cloneBoard(int[][] board) {
-        int[][] newBoard = new int[8][8];
-        for (int i = 0; i < 8; i++) {
-            newBoard[i] = board[i].clone();
+    public static boolean simulateMove(int[][] board, int row, int col, Direction dir) {
+        int value = board[row][col];
+        if (value <= 0) return false;
+        board[row][col] = -1;
+        int count = 0;
+        int r = row, c = col;
+        while (count < value) {
+            int nr = r + dir.dr();
+            int nc = c + dir.dc();
+            // Instead of immediately returning false when out-of-bound,
+            // if the current cell is the goal cell, consider the move valid.
+            if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) {
+                if (r == goalRow && c == goalCol) {
+                    return true;
+                } else {
+                    return false;
+                }
+            }
+            if (board[nr][nc] != -1) {
+                board[nr][nc] = -1;
+                count++;
+            }
+            r = nr;
+            c = nc;
+        }
+        return true;
+    }
+
+    public static int[][] copyBoard(int[][] board) {
+        int[][] newBoard = new int[ROWS][COLS];
+        for (int i = 0; i < ROWS; i++) {
+            newBoard[i] = Arrays.copyOf(board[i], COLS);
         }
         return newBoard;
     }
 
-    private void printBoard(int[][] board) {
-        for (int i = 0; i < 8; i++) {
-            for (int j = 0; j < 8; j++) {
-                System.out.print(String.format("%2d ", board[i][j]));
-            }
-            System.out.println();
-        }
-    }
-
-    private long boardToHash(int[][] board) {
-        long hash = 0;
-        for (int i = 0; i < 8; i++) {
-            for (int j = 0; j < 8; j++) {
-                hash = (hash << 1) | (board[i][j] == -1 ? 1 : 0); // 1 for filled, 0 otherwise
+    public static String boardToString(int[][] board) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < ROWS; i++) {
+            for (int j = 0; j < COLS; j++) {
+                sb.append(board[i][j]).append(",");
             }
         }
-        return hash;
+        return sb.toString();
     }
-
-    private static class Tower {
-        int i, j, k;
-        Tower(int i, int j, int k) {
-            this.i = i;
-            this.j = j;
-            this.k = k;
-        }
-    }
-
-    public static void main(String[] args) {
-        int[][] initial = {
-                {0, 1, 0, 0, 0, 0, 0, 0},
-                {2, 0, 0, 1, 0, 1, 0, 0},
-                {0, 0, 0, 0, 1, 0, 1, 0},
-                {0, 0, 0, 1, 0, 1, 0, 0},
-                {0, 0, 1, 0, 1, 0, 2, 0},
-                {0, 0, 0, 0, 0, 1, 0, 0},
-                {0, 0, 0, 0, 0, 0, 0, 1},
-                {0, 0, 0, 0, 0, 0, 0, 0}
-        };
-        int goalI = 0, goalJ = 7;
-
-        ZhedSolver solver = new ZhedSolver(goalI, goalJ);
-        List<String> solution = solver.solve(initial);
-
+    private static void runTest(int testNumber, int[][] initial, int goalRow, int goalCol) {
+        System.out.println("Test " + testNumber + ":");
+        List<Move> solution = solve(initial, goalRow, goalCol);
         if (solution != null) {
-            System.out.println("\nFinal Solution Sequence:");
-            for (String step : solution) {
-                System.out.println(step);
+            System.out.println("Solution found (" + solution.size() + " moves):");
+            for (Move m : solution) {
+                System.out.println(m);
             }
         } else {
             System.out.println("No solution found.");
         }
+        System.out.println("------");
+    }
+
+    public static void main(String[] args) {
+        int[][] initial1 = {
+                {0,0,0,0,0,0,0,0},
+                {0,0,0,0,0,0,0,0},
+                {0,0,0,0,1,1,0,0},
+                {0,1,0,0,0,0,0,0},
+                {0,0,0,1,1,0,0,0},
+                {0,0,1,0,0,0,0,0},
+                {0,0,0,0,0,0,0,0},
+                {0,0,0,0,0,0,0,0}
+        };
+        int goalRow1 = 3, goalCol1 = 6;
+        runTest(1, initial1, goalRow1, goalCol1);
+
+        int[][] initial2 = {
+                {0,0,0,0,0,0,0,0},
+                {0,0,0,0,0,0,3,0},
+                {0,0,0,0,0,0,0,0},
+                {0,0,0,0,0,0,0,0},
+                {0,0,2,0,0,0,0,0},
+                {0,0,0,0,0,3,0,0},
+                {0,0,0,2,0,0,0,0},
+                {0,0,0,0,0,0,0,0}
+        };
+        int goalRow2 = 1, goalCol2 = 2;
+        runTest(2, initial2, goalRow2, goalCol2);
+
+        int[][] initial3 = {
+                {0,0,0,0,0,0,0,0},
+                {0,0,0,0,0,0,0,0},
+                {0,0,0,0,0,0,0,0},
+                {0,0,0,0,0,0,0,0},
+                {0,0,0,0,0,0,0,0},
+                {0,0,0,0,0,0,0,0},
+                {0,0,0,0,0,0,0,0},
+                {0,0,0,0,0,3,0,0}
+        };
+        int goalRow3 = 5, goalCol3 = 0;
+        runTest(3, initial3, goalRow3, goalCol3);
     }
 }
