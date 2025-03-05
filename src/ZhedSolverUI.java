@@ -17,7 +17,7 @@ public class ZhedSolverUI extends JFrame {
     private JTextField goalColField;
 
     public ZhedSolverUI() {
-        setTitle("Tile Puzzle Solver");
+        setTitle("Zhed Puzzle Solver");
         setSize(700, 600);
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
@@ -232,7 +232,7 @@ public class ZhedSolverUI extends JFrame {
         }
         return sb.toString();
     }
-    // --- End of UI Helper Methods ---
+ 
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
