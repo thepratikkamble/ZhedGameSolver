@@ -2,12 +2,12 @@ import java.util.*;
 
 public class GameSolver {
 
-    // The four possible move directions.
+    // Four possible move directions.
     enum Direction {
         UP, DOWN, LEFT, RIGHT
     }
 
-    // A Move holds the starting position and the chosen direction.
+    // A Move holds the starting position and chosen direction.
     static class Move {
         int row, col;
         Direction dir;
@@ -24,18 +24,21 @@ public class GameSolver {
         }
     }
 
+    // A helper class for board cell positions.
+    static class Cell {
+        int row, col;
+        Cell(int row, int col) { this.row = row; this.col = col; }
+    }
+
     // Board dimensions.
     static final int ROWS = 8, COLS = 8;
 
-    // Global cache for memoization: store visited board states.
+    // Global cache for forward search.
     static Set<String> visitedStates = new HashSet<>();
 
     /**
-     * Attempts to solve the puzzle starting from the given board configuration.
-     * @param board An 8x8 board (0 = empty, >0 = tile value, -1 = activated cell)
-     * @param goalRow The goal cell row index.
-     * @param goalCol The goal cell column index.
-     * @return A list of Moves that solve the puzzle (or null if no solution is found).
+     * Main solver: try to solve the board using a combination of forward search and
+     * the backward (terminal-tower) heuristic.
      */
     public static List<Move> solve(int[][] board, int goalRow, int goalCol) {
         visitedStates.clear();
@@ -47,116 +50,176 @@ public class GameSolver {
     }
 
     /**
-     * Recursive backtracking search over board moves.
+     * Recursive forward search that now first attempts a backward resolution.
      */
     private static boolean search(int[][] board, int goalRow, int goalCol, List<Move> moves) {
-        // Base case: if the goal cell is activated (-1), the puzzle is solved.
+        // Base: goal already activated.
         if (board[goalRow][goalCol] == -1) {
             return true;
         }
 
-        // Use memoization to avoid revisiting states.
-        String stateKey = boardToString(board);
-        if (visitedStates.contains(stateKey)) {
-            return false;
+        // Try the backward approach first.
+        List<Move> backwardSolution = solveBackward(board, goalRow, goalCol);
+        if (backwardSolution != null) {
+            moves.addAll(backwardSolution);
+            return true;
         }
+
+        // Use memoization to avoid re-exploring the same board state.
+        String stateKey = boardToString(board);
+        if (visitedStates.contains(stateKey)) return false;
         visitedStates.add(stateKey);
 
-        // Try moves from every tile with a positive value.
+        // Standard forward search: try every tower and every move.
         for (int i = 0; i < ROWS; i++) {
             for (int j = 0; j < COLS; j++) {
                 if (board[i][j] > 0) {
-                    // Create a list of directions to try.
-                    List<Direction> directions = new ArrayList<>(Arrays.asList(Direction.values()));
-                    // Prioritize a direction that is toward the goal if aligned.
-                    if (i == goalRow) {
-                        if (j < goalCol) {
-                            directions.remove(Direction.RIGHT);
-                            directions.add(0, Direction.RIGHT);
-                        } else {
-                            directions.remove(Direction.LEFT);
-                            directions.add(0, Direction.LEFT);
-                        }
-                    }
-                    if (j == goalCol) {
-                        if (i < goalRow) {
-                            directions.remove(Direction.DOWN);
-                            directions.add(0, Direction.DOWN);
-                        } else {
-                            directions.remove(Direction.UP);
-                            directions.add(0, Direction.UP);
-                        }
-                    }
-
-                    for (Direction d : directions) {
+                    for (Direction d : Direction.values()) {
                         int[][] newBoard = copyBoard(board);
                         if (simulateMove(newBoard, i, j, d)) {
                             moves.add(new Move(i, j, d));
                             if (search(newBoard, goalRow, goalCol, moves)) {
                                 return true;
                             }
-                            // Backtrack.
                             moves.remove(moves.size() - 1);
                         }
                     }
                 }
             }
         }
-
         return false;
     }
 
     /**
-     * Simulates activating the tile at (row, col) in the given direction.
+     * Backward method: if the goal cell is not activated, look for a terminal tower in the
+     * same row or column. Then treat every box between that tower and the goal as a subgoal.
      *
-     * Rules:
-     * 1. Set the tile at (row, col) to -1.
-     * 2. Then travel in the given direction:
-     *    - As you travel, if you encounter a cell not activated (-1), set it to -1 and count it.
-     *    - If the cell is already activated, skip it (do not count it).
-     *    - Continue until exactly 'value' new cells are activated.
-     *    - If you hit the board’s boundary before meeting the required activations, the move is invalid.
+     * This method is heuristic: it returns a (possibly empty) list of moves that, if applied,
+     * would (in theory) activate the goal.
      *
-     * @return true if the move is valid (i.e. exactly 'value' new cells activated), false otherwise.
+     * If no candidate tower yields a backward solution, returns null.
+     */
+    private static List<Move> solveBackward(int[][] board, int goalRow, int goalCol) {
+        // If goal already activated, return an empty solution.
+        if (board[goalRow][goalCol] == -1) return new ArrayList<>();
+
+        // Look for towers (tiles) in the same row or column as the goal.
+        for (int i = 0; i < ROWS; i++) {
+            for (int j = 0; j < COLS; j++) {
+                if (board[i][j] > 0) {
+                    Direction d = null;
+                    if (i == goalRow) {
+                        d = (j < goalCol) ? Direction.RIGHT : (j > goalCol) ? Direction.LEFT : null;
+                    }
+                    if (j == goalCol) {
+                        d = (i < goalRow) ? Direction.DOWN : (i > goalRow) ? Direction.UP : d;
+                    }
+                    if (d != null) {
+                        // Determine the straight-line path from tower to goal.
+                        List<Cell> path = new ArrayList<>();
+                        int r = i, c = j;
+                        while (true) {
+                            r += deltaRow(d);
+                            c += deltaCol(d);
+                            if (r < 0 || r >= ROWS || c < 0 || c >= COLS) break;
+                            path.add(new Cell(r, c));
+                            if (r == goalRow && c == goalCol) break;
+                        }
+                        // For this tower, count the number of cells that are not yet activated along the path.
+                        int needed = 0;
+                        for (Cell cell : path) {
+                            if (board[cell.row][cell.col] != -1) needed++;
+                        }
+                        // For the terminal tower, its tile value must equal the number of new activations it would do.
+                        if (needed == board[i][j] && contains(path, goalRow, goalCol)) {
+                            // Try to solve each subgoal (i.e. every cell in the path that is not activated) recursively.
+                            int[][] boardCopy = copyBoard(board);
+                            // Remove the tower (simulate using it) by marking it as activated.
+                            boardCopy[i][j] = -1;
+                            List<Move> subMoves = new ArrayList<>();
+                            boolean allSolved = true;
+                            // Process each cell along the path in order.
+                            for (Cell cell : path) {
+                                if (boardCopy[cell.row][cell.col] != -1) {
+                                    List<Move> sol = solveBackward(boardCopy, cell.row, cell.col);
+                                    if (sol == null) {
+                                        allSolved = false;
+                                        break;
+                                    } else {
+                                        // Apply the moves for the subgoal to our board copy.
+                                        for (Move m : sol) {
+                                            // Simulate the move on boardCopy.
+                                            simulateMove(boardCopy, m.row, m.col, m.dir);
+                                        }
+                                        subMoves.addAll(sol);
+                                    }
+                                }
+                            }
+                            if (allSolved && boardCopy[goalRow][goalCol] == -1) {
+                                // Finally, add the terminal tower move.
+                                subMoves.add(new Move(i, j, d));
+                                return subMoves;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    // Helper: returns true if the list of cells contains a cell at (goalRow, goalCol).
+    private static boolean contains(List<Cell> cells, int goalRow, int goalCol) {
+        for (Cell cell : cells) {
+            if (cell.row == goalRow && cell.col == goalCol) return true;
+        }
+        return false;
+    }
+
+    // Helper: Return delta for row given a direction.
+    private static int deltaRow(Direction d) {
+        switch (d) {
+            case UP: return -1;
+            case DOWN: return 1;
+            default: return 0;
+        }
+    }
+
+    // Helper: Return delta for col given a direction.
+    private static int deltaCol(Direction d) {
+        switch (d) {
+            case LEFT: return -1;
+            case RIGHT: return 1;
+            default: return 0;
+        }
+    }
+
+    /**
+     * Simulate a move (forward) according to the rules:
+     * Activate the tile at (row, col), then travel in the given direction,
+     * skipping activated cells, until exactly [tile value] new cells are activated.
+     * Returns true if the move is valid.
      */
     private static boolean simulateMove(int[][] board, int row, int col, Direction dir) {
         int value = board[row][col];
         if (value <= 0) return false;
-
-        // Activate the tile itself.
         board[row][col] = -1;
-        int count = 0;  // Count of new cells activated.
+        int count = 0;
         int r = row, c = col;
-
-        int dr = 0, dc = 0;
-        switch (dir) {
-            case UP:    dr = -1; break;
-            case DOWN:  dr = 1;  break;
-            case LEFT:  dc = -1; break;
-            case RIGHT: dc = 1;  break;
-        }
-
-        // Travel in the chosen direction.
         while (count < value) {
-            int nr = r + dr;
-            int nc = c + dc;
-            // If the boundary is reached before activating the required number of cells, move is invalid.
-            if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) {
-                return false;
-            }
-            // If cell is not yet activated, activate it and count it.
+            int nr = r + deltaRow(dir);
+            int nc = c + deltaCol(dir);
+            if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) return false;
             if (board[nr][nc] != -1) {
                 board[nr][nc] = -1;
                 count++;
             }
-            // Always move to the next cell.
-            r = nr;
-            c = nc;
+            r = nr; c = nc;
         }
         return true;
     }
 
-    // Helper method to deep-copy the board.
+    // Helper: deep-copy the board.
     private static int[][] copyBoard(int[][] board) {
         int[][] newBoard = new int[ROWS][COLS];
         for (int i = 0; i < ROWS; i++) {
@@ -165,7 +228,7 @@ public class GameSolver {
         return newBoard;
     }
 
-    // Helper method to convert the board to a string (for caching).
+    // Helper: convert board to a string for memoization.
     private static String boardToString(int[][] board) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < ROWS; i++) {
@@ -176,7 +239,7 @@ public class GameSolver {
         return sb.toString();
     }
 
-    // Run a test case.
+    // Helper: run a test.
     private static void runTest(int testNumber, int[][] initial, int goalRow, int goalCol) {
         System.out.println("Test " + testNumber + ":");
         List<Move> solution = solve(initial, goalRow, goalCol);
@@ -192,7 +255,7 @@ public class GameSolver {
     }
 
     public static void main(String[] args) {
-        // Test 1: Sample board configuration.
+        // Test 1:
         int[][] initial1 = {
                 {0, 0, 0, 0, 0, 0, 0, 0},
                 {0, 0, 0, 0, 0, 0, 0, 0},
