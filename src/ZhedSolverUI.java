@@ -4,11 +4,11 @@ import java.awt.event.*;
 import java.util.*;
 import java.util.List;
 
-
 public class ZhedSolverUI extends JFrame {
 
     private JComboBox<String> testSelector;
     private JButton solveButton;
+    private JButton clearButton;
     private JTextArea outputArea;
     private JTextArea boardArea;
     private JPanel customPanel;
@@ -25,8 +25,10 @@ public class ZhedSolverUI extends JFrame {
         JPanel topPanel = new JPanel(new FlowLayout());
         testSelector = new JComboBox<>(new String[] { "Test 1", "Test 2", "Test 3", "Custom" });
         solveButton = new JButton("Solve");
+        clearButton = new JButton("Clear Board");
         topPanel.add(testSelector);
         topPanel.add(solveButton);
+        topPanel.add(clearButton);
         add(topPanel, BorderLayout.NORTH);
 
         customPanel = new JPanel(new BorderLayout());
@@ -78,6 +80,26 @@ public class ZhedSolverUI extends JFrame {
                 runSelectedTest();
             }
         });
+
+        clearButton.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                clearCustomBoard();
+            }
+        });
+    }
+
+    private void clearCustomBoard() {
+        StringBuilder zeros = new StringBuilder();
+        for (int i = 0; i < ZhedSolver.ROWS; i++) {
+            for (int j = 0; j < ZhedSolver.COLS; j++) {
+                zeros.append("0");
+                if (j < ZhedSolver.COLS - 1) zeros.append(" ");
+            }
+            if (i < ZhedSolver.ROWS - 1) zeros.append("\n");
+        }
+        customBoardInput.setText(zeros.toString());
+        goalRowField.setText("");
+        goalColField.setText("");
     }
 
     private Object[] getTestData(String testName) {
@@ -232,7 +254,6 @@ public class ZhedSolverUI extends JFrame {
         }
         return sb.toString();
     }
- 
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
